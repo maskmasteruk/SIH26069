@@ -3,7 +3,9 @@
   <component name="NewModuleRootManager" inherit-compiler-output="true">
     <exclude-output />
     <content url="file://$MODULE_DIR$">
+      <excludeFolder url="file://$MODULE_DIR$/news_scrapper/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/social_media_scrapper/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/weather_api/.venv" />
     </content>
     <orderEntry type="sourceFolder" forTests="false" />
   </component>

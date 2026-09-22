@@ -12,6 +12,7 @@ import requests
 from dotenv import load_dotenv
 
 from kafka_event_stream import publish_new_post_event
+from weather_filter import is_weather_post
 
 
 # ============================================================
@@ -1676,10 +1677,30 @@ def process_hashtag(
 
                     new_count += 1
 
-                    publish_new_post_event(
-                        post,
-                        logger
-                    )
+                    if is_weather_post(
+                            post.get("title"),
+                            post.get("text")
+                    ):
+
+                        publish_new_post_event(
+                            post,
+                            logger
+                        )
+
+                    else:
+
+                        logger.info(
+                            (
+                                "Skipping non-weather "
+                                "Kafka event: %s | %s"
+                            ),
+                            platform_name,
+                            (
+                                    post.get("title")
+                                    or post.get("text")
+                                    or ""
+                            )[:100]
+                        )
 
             total_found += len(posts)
             total_new += new_count
