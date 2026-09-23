@@ -56,21 +56,7 @@ export const AdminLoginPage: React.FC = () => {
             Authenticate to access incident triage and master records.
           </p>
         </div>
-
-        {/* Local Docker seed account */}
-        <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded p-2.5 flex items-center justify-between">
-          <span>
-            Docker seed: <strong className="font-mono text-slate-800">admin / admin</strong>
-          </span>
-          <button
-            type="button"
-            onClick={handleQuickFill}
-            className="text-[11px] text-slate-700 hover:underline font-medium cursor-pointer"
-          >
-            Auto-fill
-          </button>
-        </div>
-
+        
         {/* Error notice */}
         {errorMessage && (
           <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2.5">

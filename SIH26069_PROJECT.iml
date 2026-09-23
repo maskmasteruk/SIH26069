@@ -6,6 +6,7 @@
       <excludeFolder url="file://$MODULE_DIR$/news_scrapper/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/social_media_scrapper/.venv" />
       <excludeFolder url="file://$MODULE_DIR$/weather_api/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/admin_frontend_users/.venv" />
     </content>
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
