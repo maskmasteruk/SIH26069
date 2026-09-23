@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: disaster_postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: disaster_events
+      POSTGRES_USER: disaster_admin
+      POSTGRES_PASSWORD: disaster_password
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - ./data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U disaster_admin -d disaster_events"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - disaster_network
+
+networks:
+  disaster_network:
+    driver: bridge

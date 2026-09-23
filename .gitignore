@@ -2,3 +2,4 @@
 .env.*
 !.env.example
 **/output
+postgres/data/

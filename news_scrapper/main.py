@@ -148,7 +148,7 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv(
 
 KAFKA_TOPIC = os.getenv(
     "KAFKA_TOPIC",
-    "india-weather-news"
+    "india_weather_news"
 )
 
 KAFKA_ACKS = os.getenv(

@@ -79,17 +79,17 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv(
 
 INPUT_TOPIC = os.getenv(
     "KAFKA_INPUT_TOPIC",
-    "location-data"
+    "location_data"
 )
 
 OUTPUT_TOPIC = os.getenv(
     "KAFKA_OUTPUT_TOPIC",
-    "weather-data"
+    "weather_data"
 )
 
 KAFKA_GROUP_ID = os.getenv(
     "KAFKA_GROUP_ID",
-    "weather-service"
+    "weather_service"
 )
 
 WEATHER_API_URL = os.getenv(

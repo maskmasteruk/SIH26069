@@ -4,10 +4,13 @@ setlocal EnableExtensions EnableDelayedExpansion
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
-set "LOCATION_TOPIC=location-data"
-set "WEATHER_TOPIC=weather-data"
-set "NEWS_TOPIC=india-weather-news"
+set "LOCATION_TOPIC=location_data"
+set "WEATHER_TOPIC=weather_data"
+set "NEWS_TOPIC=india_weather_news"
 set "SOCIAL_TOPIC=social_media_new_posts"
+set "POSTGRES_CONTAINER=disaster_postgres"
+set "POSTGRES_DB=disaster_events"
+set "POSTGRES_USER=disaster_admin"
 
 call :load_env_value "%ROOT%\weather_api\.env" KAFKA_INPUT_TOPIC LOCATION_TOPIC
 call :load_env_value "%ROOT%\weather_api\.env" KAFKA_OUTPUT_TOPIC WEATHER_TOPIC
@@ -87,6 +90,46 @@ call :create_topic "%WEATHER_TOPIC%"
 call :create_topic "%NEWS_TOPIC%"
 call :create_topic "%SOCIAL_TOPIC%"
 
+if not exist "%ROOT%\postgres\docker-compose.yml" (
+    echo WARNING: PostgreSQL docker-compose.yml was not found. Skipping PostgreSQL startup.
+    goto skip_postgres
+)
+
+echo.
+echo Starting PostgreSQL...
+pushd "%ROOT%\postgres" || (
+    echo ERROR: Could not open postgres directory.
+    pause
+    exit /b 1
+)
+
+%COMPOSE_CMD% up -d
+if errorlevel 1 (
+    popd
+    echo ERROR: PostgreSQL docker compose startup failed.
+    pause
+    exit /b 1
+)
+
+popd
+
+echo Waiting for PostgreSQL readiness...
+for /l %%I in (1,1,60) do (
+    docker exec %POSTGRES_CONTAINER% pg_isready -U %POSTGRES_USER% -d %POSTGRES_DB% >nul 2>&1
+    if not errorlevel 1 goto postgres_ready
+
+    timeout /t 2 /nobreak >nul
+)
+
+echo ERROR: PostgreSQL did not become ready within 120 seconds.
+pause
+exit /b 1
+
+:postgres_ready
+echo PostgreSQL is ready.
+echo.
+
+:skip_postgres
 call :write_monitor_script
 start "Kafka Events Monitor" cmd /k "powershell -NoProfile -ExecutionPolicy Bypass -File ""%MONITOR_SCRIPT%"""
 
@@ -104,8 +147,21 @@ for /d %%D in ("%ROOT%\*") do (
 )
 
 echo.
-echo Done. Kafka and service windows are starting.
-echo Close individual windows to stop services. Use "docker compose down" in kafka folder to stop Kafka.
+echo Starting frontend...
+where npm.cmd >nul 2>&1
+if errorlevel 1 (
+    echo   WARNING: npm.cmd was not found on PATH. Skipping frontend startup.
+) else if not exist "%ROOT%\frontend\package.json" (
+    echo   WARNING: frontend\package.json was not found. Skipping frontend startup.
+) else if exist "%ROOT%\frontend\node_modules\" (
+    start "Frontend" cmd /k "cd /d ""%ROOT%\frontend"" && npm.cmd run dev"
+) else (
+    start "Frontend" cmd /k "cd /d ""%ROOT%\frontend"" && echo Installing frontend dependencies... && npm.cmd install --legacy-peer-deps --no-package-lock && npm.cmd run dev"
+)
+
+echo.
+echo Done. Kafka, PostgreSQL, frontend, and service windows are starting.
+echo Close individual windows to stop services. Use "docker compose down" in kafka and postgres folders to stop containers.
 echo.
 pause
 exit /b 0

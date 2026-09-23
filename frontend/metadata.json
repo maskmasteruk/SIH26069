@@ -1,0 +1,6 @@
+{
+  "name": "WAVE - Weather & Incident Verification Network",
+  "description": "Multi-source weather and disaster intelligence platform verifying crowdsourced social media, weather APIs, and news reports for timely community alerts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
