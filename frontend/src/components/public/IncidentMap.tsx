@@ -8,8 +8,9 @@ import {
   useMap,
 } from '@vis.gl/react-google-maps';
 import { useEvents } from '../../context/EventContext';
-import { DisasterEvent, IncidentSeverity } from '../../types';
+import { DisasterEvent, EmergencyShelter, IncidentSeverity } from '../../types';
 import { EventDetailModal } from './EventDetailModal';
+import { getOfflineDirectory, syncEmergencyDirectoryFromDatabase } from '../../utils/offlineDirectoryStorage';
 import {
   MapPin,
   AlertTriangle,
@@ -23,46 +24,6 @@ import {
   LifeBuoy,
   FileText,
 } from 'lucide-react';
-
-// Fallback shelter points across monitored sectors
-const VERIFIED_SHELTERS = [
-  {
-    id: 'sh-1',
-    name: 'Guru Nanak College Relief Center',
-    location: 'Velachery, Chennai (TN)',
-    lat: 12.9915,
-    lng: 80.222,
-    capacity: '450 Persons',
-    status: 'Operational · Supplies Available',
-  },
-  {
-    id: 'sh-2',
-    name: 'Puri District Multipurpose Cyclone Shelter #12',
-    location: 'Brahmagiri Road, Puri (OD)',
-    lat: 19.825,
-    lng: 85.815,
-    capacity: '1,200 Persons',
-    status: 'Operational · Generators Active',
-  },
-  {
-    id: 'sh-3',
-    name: 'Kamalabari High School Evacuation Post',
-    location: 'Majuli Island (AS)',
-    lat: 26.975,
-    lng: 94.225,
-    capacity: '600 Persons',
-    status: 'Operational · SDRF Boat Patrol',
-  },
-  {
-    id: 'sh-4',
-    name: 'Meppadi Panchayat Community Hall',
-    location: 'Chooralmala Junction, Wayanad (KL)',
-    lat: 11.545,
-    lng: 76.132,
-    capacity: '350 Persons',
-    status: 'Operational · Medical Aid Station',
-  },
-];
 
 // Helper component to draw geofence circle overlays
 const IncidentGeofenceCircle: React.FC<{
@@ -136,9 +97,8 @@ export const IncidentMap: React.FC = () => {
   const [showShelters, setShowShelters] = useState(true);
   const [showCircles, setShowCircles] = useState(true);
   const [hoveredEvent, setHoveredEvent] = useState<DisasterEvent | null>(null);
-  const [selectedShelter, setSelectedShelter] = useState<(typeof VERIFIED_SHELTERS)[0] | null>(
-    null
-  );
+  const [shelters, setShelters] = useState<EmergencyShelter[]>(() => getOfflineDirectory().shelters);
+  const [selectedShelter, setSelectedShelter] = useState<EmergencyShelter | null>(null);
   const [cameraTarget, setCameraTarget] = useState<{
     lat: number;
     lng: number;
@@ -146,10 +106,13 @@ export const IncidentMap: React.FC = () => {
   } | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
-  // API Key handling per skill guidelines
-  const apiKey =
-    import.meta.env.VITE_GOOGLE_MAPS_API_KEY ||
-    'AIzaSyAqKU5qDEEKTASuZmUwfPY0SwvLS94CoiY';
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+
+  useEffect(() => {
+    syncEmergencyDirectoryFromDatabase()
+      .then((directory) => setShelters(directory.shelters))
+      .catch(() => setShelters(getOfflineDirectory().shelters));
+  }, []);
 
   const filteredEvents = events.filter((evt) => {
     if (activeLayer === 'verified_only') {
@@ -166,23 +129,19 @@ export const IncidentMap: React.FC = () => {
   });
 
   const inspectEvent = selectedEvent || filteredEvents[0] || events[0];
+  const eventJumpOptions = filteredEvents.slice(0, 5);
 
-  const jumpToSector = (sector: 'all' | 'chennai' | 'puri' | 'majuli' | 'wayanad') => {
-    if (sector === 'all') {
-      setCameraTarget({ lat: 20.5937, lng: 78.9629, zoom: 5 });
-    } else if (sector === 'chennai') {
-      setCameraTarget({ lat: 12.9815, lng: 80.218, zoom: 12 });
-      setUserLocation({ name: 'Velachery, Chennai (TN)', lat: 12.9815, lng: 80.218 });
-    } else if (sector === 'puri') {
-      setCameraTarget({ lat: 19.8135, lng: 85.8312, zoom: 11 });
-      setUserLocation({ name: 'Puri Coastal Sector (OD)', lat: 19.8135, lng: 85.8312 });
-    } else if (sector === 'majuli') {
-      setCameraTarget({ lat: 26.9602, lng: 94.2155, zoom: 11 });
-      setUserLocation({ name: 'Majuli Island (AS)', lat: 26.9602, lng: 94.2155 });
-    } else if (sector === 'wayanad') {
-      setCameraTarget({ lat: 11.5518, lng: 76.1264, zoom: 12 });
-      setUserLocation({ name: 'Wayanad Ghats (KL)', lat: 11.5518, lng: 76.1264 });
-    }
+  const jumpToAllEvents = () => {
+    setCameraTarget({ lat: 20.5937, lng: 78.9629, zoom: filteredEvents.length > 1 ? 5 : 6 });
+  };
+
+  const jumpToEvent = (event: DisasterEvent) => {
+    setCameraTarget({ lat: event.location.lat, lng: event.location.lng, zoom: 12 });
+    setUserLocation({
+      name: [event.location.name, event.location.state].filter(Boolean).join(', '),
+      lat: event.location.lat,
+      lng: event.location.lng,
+    });
   };
 
   return (
@@ -199,39 +158,25 @@ export const IncidentMap: React.FC = () => {
           </span>
         </div>
 
-        {/* Sector Quick-Zoom Presets */}
+        {/* Event Quick-Zoom Presets */}
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-slate-500 mr-1 font-medium hidden sm:inline">Jump Sector:</span>
+          <span className="text-slate-500 mr-1 font-medium hidden sm:inline">Jump Event:</span>
           <button
-            onClick={() => jumpToSector('all')}
+            onClick={jumpToAllEvents}
             className="px-2.5 py-1 rounded bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors font-medium"
           >
-            All India
+            All Events
           </button>
-          <button
-            onClick={() => jumpToSector('chennai')}
-            className="px-2.5 py-1 rounded bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors font-medium"
-          >
-            Chennai
-          </button>
-          <button
-            onClick={() => jumpToSector('puri')}
-            className="px-2.5 py-1 rounded bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors font-medium"
-          >
-            Odisha Coast
-          </button>
-          <button
-            onClick={() => jumpToSector('majuli')}
-            className="px-2.5 py-1 rounded bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors font-medium"
-          >
-            Majuli (AS)
-          </button>
-          <button
-            onClick={() => jumpToSector('wayanad')}
-            className="px-2.5 py-1 rounded bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors font-medium"
-          >
-            Wayanad (KL)
-          </button>
+          {eventJumpOptions.map((event) => (
+            <button
+              key={`jump-${event.id}`}
+              onClick={() => jumpToEvent(event)}
+              className="px-2.5 py-1 rounded bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors font-medium"
+              title={event.title}
+            >
+              {event.location.district || event.location.name}
+            </button>
+          ))}
           <button
             onClick={async () => {
               await detectRealtimeLocation();
@@ -283,6 +228,7 @@ export const IncidentMap: React.FC = () => {
       <div className="relative grid grid-cols-1 lg:grid-cols-12 min-h-[540px]">
         {/* Google Maps Container */}
         <div className="relative col-span-1 lg:col-span-8 min-h-[460px] lg:min-h-[540px] w-full bg-slate-100">
+          {apiKey ? (
           <APIProvider apiKey={apiKey}>
             <Map
               mapId="DEMO_MAP_ID"
@@ -343,7 +289,7 @@ export const IncidentMap: React.FC = () => {
 
               {/* Evacuation Shelter Markers */}
               {showShelters &&
-                VERIFIED_SHELTERS.map((s) => (
+                shelters.map((s) => (
                   <AdvancedMarker
                     key={s.id}
                     position={{ lat: s.lat, lng: s.lng }}
@@ -435,6 +381,11 @@ export const IncidentMap: React.FC = () => {
               )}
             </Map>
           </APIProvider>
+          ) : (
+            <div className="flex h-full min-h-[540px] items-center justify-center p-6 text-center text-xs text-slate-600">
+              Set VITE_GOOGLE_MAPS_API_KEY to render the live incident map.
+            </div>
+          )}
 
           {/* Floating Map Legend Overlay */}
           <div className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-xs rounded-lg border border-slate-200 p-2.5 shadow-md text-xs z-10 space-y-1.5 font-sans">

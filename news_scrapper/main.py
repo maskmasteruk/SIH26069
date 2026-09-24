@@ -4,8 +4,9 @@ import logging
 import os
 import re
 import sqlite3
+import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -22,6 +23,15 @@ from weather_filter import find_weather_keywords, is_weather_related
 
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
+)
+
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from shared.event_validation import (  # noqa: E402
+    location_to_payload,
+    validate_event_for_kafka,
 )
 
 load_dotenv(
@@ -210,6 +220,38 @@ DATABASE_FILE = output_file_path(
         "DATABASE_FILE",
         "news_scrapper.db"
     )
+)
+
+ENABLE_HISTORICAL_BACKFILL = env_bool(
+    "ENABLE_HISTORICAL_BACKFILL",
+    True
+)
+
+HISTORICAL_LOOKBACK_YEARS = env_int(
+    "HISTORICAL_LOOKBACK_YEARS",
+    10
+)
+
+HISTORICAL_MAX_RECORDS_PER_QUERY = env_int(
+    "HISTORICAL_MAX_RECORDS_PER_QUERY",
+    25
+)
+
+GDELT_DOC_API_URL = os.getenv(
+    "GDELT_DOC_API_URL",
+    "https://api.gdeltproject.org/api/v2/doc/doc"
+)
+
+HISTORICAL_EVENT_QUERIES = env_list(
+    "HISTORICAL_EVENT_QUERIES",
+    [
+        "India flood killed",
+        "India cyclone landfall damage",
+        "India landslide killed",
+        "India cloudburst deaths",
+        "India heatwave deaths",
+        "India heavy rain flooding",
+    ]
 )
 
 
@@ -993,10 +1035,195 @@ def extract_article(url):
 
 
 # ============================================================
+# HISTORICAL ARTICLE DISCOVERY
+# ============================================================
+
+def _gdelt_datetime(value):
+
+    return value.strftime(
+        "%Y%m%d%H%M%S"
+    )
+
+
+def discover_historical_articles():
+
+    if not ENABLE_HISTORICAL_BACKFILL:
+        return []
+
+    end = datetime.now(
+        timezone.utc
+    )
+
+    start = end - timedelta(
+        days=HISTORICAL_LOOKBACK_YEARS * 365
+    )
+
+    historical = {}
+
+    for query in HISTORICAL_EVENT_QUERIES:
+
+        params = {
+            "query": query,
+            "mode": "ArtList",
+            "format": "json",
+            "maxrecords": HISTORICAL_MAX_RECORDS_PER_QUERY,
+            "sort": "HybridRel",
+            "startdatetime": _gdelt_datetime(start),
+            "enddatetime": _gdelt_datetime(end),
+        }
+
+        try:
+
+            response = session.get(
+                GDELT_DOC_API_URL,
+                params=params,
+                timeout=REQUEST_TIMEOUT
+            )
+
+            response.raise_for_status()
+
+            data = response.json()
+
+        except Exception as exc:
+
+            logger.warning(
+                "Historical query failed: %s | %s",
+                query,
+                exc
+            )
+
+            continue
+
+        for item in data.get("articles", []):
+
+            url = item.get("url")
+
+            if not url:
+                continue
+
+            historical[url] = {
+                "url": url,
+                "title_hint": item.get("title") or "",
+                "published_at": item.get("seendate"),
+                "domain": item.get("domain"),
+                "source_country": item.get("sourcecountry"),
+                "query": query,
+            }
+
+        time.sleep(
+            SOURCE_DELAY_SECONDS
+        )
+
+    logger.info(
+        "Historical backfill discovered %d unique candidate URLs",
+        len(historical)
+    )
+
+    return list(
+        historical.values()
+    )
+
+
+def process_historical_backfill():
+
+    source = {
+        "name": "GDELT Historical Backfill",
+        "type": "historical_news",
+        "language": "Mixed",
+        "region": "India"
+    }
+
+    candidates = discover_historical_articles()
+
+    found_count = 0
+    new_count = 0
+
+    for item in candidates:
+
+        url = item["url"]
+
+        extracted = extract_article(url) or {}
+
+        title = (
+            extracted.get("title")
+            or item.get("title_hint")
+            or ""
+        )
+
+        published_at = (
+            extracted.get("published_at")
+            or item.get("published_at")
+        )
+
+        article = {
+            "title": title,
+            "author": extracted.get("author"),
+            "published_at": published_at,
+            "text": extracted.get("text") or title,
+        }
+
+        combined = f"{title} {article.get('text') or ''}"
+
+        if not is_weather_related(combined):
+            continue
+
+        validation = validate_event_for_kafka(
+            text=combined,
+            published_at=published_at,
+            location_hints=[
+                source["region"],
+                item.get("query"),
+            ],
+        )
+
+        if not validation.is_valid:
+
+            logger.info(
+                "Skipping historical Kafka event: %s | %s",
+                validation.reason,
+                title[:100]
+            )
+
+            continue
+
+        found_count += 1
+
+        event = build_event(
+            source,
+            url,
+            article,
+            validation
+        )
+
+        if not save_article_event(event):
+            continue
+
+        send_to_kafka(event)
+
+        new_count += 1
+
+        logger.info(
+            "NEW HISTORICAL WEATHER EVENT: %s",
+            title[:100]
+        )
+
+    logger.info(
+        "Historical backfill: found=%d new=%d",
+        found_count,
+        new_count
+    )
+
+    return (
+        found_count,
+        new_count
+    )
+
+
+# ============================================================
 # BUILD KAFKA EVENT
 # ============================================================
 
-def build_event(source, url, article):
+def build_event(source, url, article, validation):
 
     title = article.get("title") or ""
 
@@ -1028,6 +1255,12 @@ def build_event(source, url, article):
 
         "event_timestamp": now_iso(),
 
+        "timestamp": (
+            validation.occurred_at.isoformat()
+            if validation.occurred_at
+            else article.get("published_at")
+        ),
+
         # ----------------------------------------------------
         # News source
         # ----------------------------------------------------
@@ -1051,6 +1284,24 @@ def build_event(source, url, article):
                 "published_at"
             )
         },
+
+        "occurrence": {
+            "status": "occurred",
+            "occurred_at": (
+                validation.occurred_at.isoformat()
+                if validation.occurred_at
+                else None
+            ),
+            "validation_reason": validation.reason
+        },
+
+        "location": location_to_payload(
+            validation.location
+        ),
+
+        "latitude": validation.location.latitude,
+
+        "longitude": validation.location.longitude,
 
         # ----------------------------------------------------
         # Weather information
@@ -1159,12 +1410,37 @@ def process_source(source):
         if not is_weather_related(combined):
             continue
 
+        preliminary_locations = extract_locations(
+            combined
+        )
+
+        validation = validate_event_for_kafka(
+            text=combined,
+            published_at=article.get("published_at"),
+            location_hints=[
+                source.get("region"),
+                *preliminary_locations,
+            ],
+        )
+
+        if not validation.is_valid:
+
+            logger.info(
+                "Skipping Kafka event: %s | %s | %s",
+                validation.reason,
+                source["name"],
+                title[:100]
+            )
+
+            continue
+
         found_count += 1
 
         event = build_event(
             source,
             url,
-            article
+            article,
+            validation
         )
 
         if not save_article_event(event):
@@ -1233,6 +1509,22 @@ def scrape_once():
 
         # Don't hammer websites
         time.sleep(SOURCE_DELAY_SECONDS)
+
+    if ENABLE_HISTORICAL_BACKFILL:
+
+        try:
+
+            found, new = process_historical_backfill()
+
+            total_found += found
+            total_new += new
+
+        except Exception as e:
+
+            logger.exception(
+                "Historical backfill failed: %s",
+                e
+            )
 
     producer.flush()
 

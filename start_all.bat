@@ -134,14 +134,15 @@ call :write_monitor_script
 start "Kafka Events Monitor" cmd /k "powershell -NoProfile -ExecutionPolicy Bypass -File ""%MONITOR_SCRIPT%"""
 
 echo.
+echo Starting listener...
+call :start_python_service "%ROOT%\listener" "Event Listener"
+
+echo.
 echo Starting Python services in their virtual environments...
 for /d %%D in ("%ROOT%\*") do (
     if exist "%%~fD\main.py" (
-        if exist "%%~fD\.venv\Scripts\activate.bat" (
-            echo   Starting %%~nxD
-            start "%%~nxD" cmd /k "cd /d ""%%~fD"" && call "".venv\Scripts\activate.bat"" && python main.py"
-        ) else (
-            echo   Skipping %%~nxD - missing .venv\Scripts\activate.bat
+        if /I not "%%~nxD"=="listener" (
+            call :start_python_service "%%~fD" "%%~nxD"
         )
     )
 )
@@ -160,7 +161,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo Done. Kafka, PostgreSQL, frontend, and service windows are starting.
+echo Done. Kafka, PostgreSQL, listener, frontend, and service windows are starting.
 echo Close individual windows to stop services. Use "docker compose down" in kafka and postgres folders to stop containers.
 echo.
 pause
@@ -197,6 +198,25 @@ if errorlevel 1 (
     echo   WARNING: Could not create or verify topic "%~1".
 )
 
+exit /b 0
+
+
+:start_python_service
+set "SERVICE_DIR=%~1"
+set "SERVICE_TITLE=%~2"
+
+if not exist "%SERVICE_DIR%\main.py" (
+    echo   Skipping %SERVICE_TITLE% - missing main.py
+    exit /b 0
+)
+
+if not exist "%SERVICE_DIR%\.venv\Scripts\activate.bat" (
+    echo   Skipping %SERVICE_TITLE% - missing .venv\Scripts\activate.bat
+    exit /b 0
+)
+
+echo   Starting %SERVICE_TITLE%
+start "%SERVICE_TITLE%" cmd /k "cd /d ""%SERVICE_DIR%"" && call "".venv\Scripts\activate.bat"" && python main.py"
 exit /b 0
 
 

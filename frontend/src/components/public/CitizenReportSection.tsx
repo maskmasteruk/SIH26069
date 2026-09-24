@@ -10,7 +10,6 @@ import {
   LifeBuoy,
   FileCheck,
 } from 'lucide-react';
-import { CHENNAI_FLOOD_IMAGE } from '../../data/mockData';
 
 export const CitizenReportSection: React.FC = () => {
   const { submitCitizenReport, userLocation } = useEvents();
@@ -23,15 +22,15 @@ export const CitizenReportSection: React.FC = () => {
   const [district, setDistrict] = useState(userLocation.name.split(',')[0] || '');
   const [reporterName, setReporterName] = useState('');
   const [contactNumber, setContactNumber] = useState('');
-  const [imageAttached, setImageAttached] = useState<string | null>(null);
+  const [mediaUrl, setMediaUrl] = useState('');
   const [immediateRescueNeeded, setImmediateRescueNeeded] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || !description || !locationName) return;
 
-    submitCitizenReport({
+    const saved = await submitCitizenReport({
       title,
       description,
       category,
@@ -41,17 +40,18 @@ export const CitizenReportSection: React.FC = () => {
       state: locationName.includes('(') ? locationName.split('(')[1].replace(')', '') : 'India',
       reporterName: reporterName || 'Resident',
       contactNumber: contactNumber || 'Not provided',
-      imageFile: imageAttached || undefined,
+      imageFile: mediaUrl.trim() || undefined,
       immediateRescueNeeded,
     });
 
+    if (!saved) return;
     setSubmitted(true);
   };
 
   const handleReset = () => {
     setTitle('');
     setDescription('');
-    setImageAttached(null);
+    setMediaUrl('');
     setImmediateRescueNeeded(false);
     setSubmitted(false);
   };
@@ -215,7 +215,7 @@ export const CitizenReportSection: React.FC = () => {
             </div>
           </div>
 
-          {/* Rescue Checkbox & Photo Simulation */}
+          {/* Rescue Checkbox & Media URL */}
           <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -229,14 +229,16 @@ export const CitizenReportSection: React.FC = () => {
               </span>
             </label>
 
-            <button
-              type="button"
-              onClick={() => setImageAttached(imageAttached ? null : CHENNAI_FLOOD_IMAGE)}
-              className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 border border-slate-200 px-3 py-1.5 rounded-lg bg-slate-50 cursor-pointer"
-            >
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg bg-slate-50">
               <Camera className="h-3.5 w-3.5" />
-              <span>{imageAttached ? 'Ground Photo Attached ✓' : 'Attach Photo'}</span>
-            </button>
+              <input
+                type="url"
+                placeholder="Optional media URL"
+                value={mediaUrl}
+                onChange={(e) => setMediaUrl(e.target.value)}
+                className="w-44 bg-transparent focus:outline-hidden placeholder:text-slate-400"
+              />
+            </label>
           </div>
 
           {/* Submit Button */}

@@ -4,6 +4,7 @@ import json
 import time
 import sqlite3
 import logging
+import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from urllib.parse import quote
@@ -93,6 +94,12 @@ MASTODON_BASE_URL = os.getenv(
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
+
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from shared.event_validation import validate_event_for_kafka  # noqa: E402
 
 OUTPUT_DIR = os.path.join(
     BASE_DIR,
@@ -1681,6 +1688,62 @@ def process_hashtag(
                             post.get("title"),
                             post.get("text")
                     ):
+
+                        validation = validate_event_for_kafka(
+                            text=" ".join(
+                                str(part)
+                                for part in (
+                                    post.get("title"),
+                                    post.get("text"),
+                                    post.get("hashtag")
+                                )
+                                if part
+                            ),
+                            published_at=post.get("published_at"),
+                            location_hints=[
+                                post.get("hashtag")
+                            ],
+                        )
+
+                        if not validation.is_valid:
+
+                            logger.info(
+                                (
+                                    "Skipping Kafka event: %s | "
+                                    "%s | %s"
+                                ),
+                                validation.reason,
+                                platform_name,
+                                (
+                                        post.get("title")
+                                        or post.get("text")
+                                        or ""
+                                )[:100]
+                            )
+
+                            continue
+
+                        post["occurrence"] = {
+                            "status": "occurred",
+                            "occurred_at": (
+                                validation.occurred_at.isoformat()
+                                if validation.occurred_at
+                                else None
+                            ),
+                            "validation_reason": validation.reason
+                        }
+
+                        post["location"] = {
+                            "name": validation.location.name,
+                            "state": validation.location.state,
+                            "country": "India",
+                            "latitude": validation.location.latitude,
+                            "longitude": validation.location.longitude,
+                            "confidence": validation.location.confidence
+                        }
+
+                        post["latitude"] = validation.location.latitude
+                        post["longitude"] = validation.location.longitude
 
                         publish_new_post_event(
                             post,

@@ -95,6 +95,22 @@ def build_new_post_event(post: Dict):
         "published_at": post.get(
             "published_at"
         ),
+        "timestamp": (
+            post.get("occurrence", {}).get("occurred_at")
+            or post.get("published_at")
+        ),
+        "occurrence": post.get(
+            "occurrence"
+        ),
+        "location": post.get(
+            "location"
+        ),
+        "latitude": post.get(
+            "latitude"
+        ),
+        "longitude": post.get(
+            "longitude"
+        ),
         "url": post.get(
             "url"
         ),

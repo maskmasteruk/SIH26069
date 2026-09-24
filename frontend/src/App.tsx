@@ -9,6 +9,7 @@ import { AdminMasterEvents } from './components/admin/AdminMasterEvents';
 import { AdminVerifiedDatabase } from './components/admin/AdminVerifiedDatabase';
 import { AdminAnalytics } from './components/admin/AdminAnalytics';
 import { AdminLoginPage } from './components/admin/AdminLoginPage';
+import { AdminEmergencyDirectory } from './components/admin/AdminEmergencyDirectory';
 import { X, CheckCircle2, AlertTriangle, Info } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -30,6 +31,8 @@ const AppContent: React.FC = () => {
         return <AdminVerifiedDatabase />;
       case '/admin/analytics':
         return <AdminAnalytics />;
+      case '/admin/directory':
+        return <AdminEmergencyDirectory />;
       case '/admin':
       default:
         return <AdminTriageQueue />;

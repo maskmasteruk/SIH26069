@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react';
 import {
-  EMERGENCY_CONTACTS,
-  EMERGENCY_SHELTERS,
   EmergencyContact,
   EmergencyShelter,
-} from '../data/emergencyDirectory';
+} from '../types';
 
 const STORAGE_KEY_CONTACTS = 'wave_emergency_contacts_v1';
 const STORAGE_KEY_SHELTERS = 'wave_emergency_shelters_v1';
@@ -19,7 +17,7 @@ export interface OfflineDirectoryMetadata {
 
 /**
  * Initializes and retrieves cached emergency directory data.
- * Falls back to bundled data if cache is empty or corrupted.
+ * Falls back to an empty cache when PostgreSQL data has not been synced yet.
  */
 export function getOfflineDirectory(): {
   contacts: EmergencyContact[];
@@ -49,20 +47,39 @@ export function getOfflineDirectory(): {
     console.warn('Failed to read from localStorage emergency cache:', err);
   }
 
-  // If not in cache, initialize it
-  const initialData = {
-    contacts: EMERGENCY_CONTACTS,
-    shelters: EMERGENCY_SHELTERS,
+  return {
+    contacts: [],
+    shelters: [],
     metadata: {
-      lastSyncedAt: new Date().toISOString(),
-      contactsCount: EMERGENCY_CONTACTS.length,
-      sheltersCount: EMERGENCY_SHELTERS.length,
-      version: '1.0',
+      lastSyncedAt: '',
+      contactsCount: 0,
+      sheltersCount: 0,
+      version: 'postgres',
     },
   };
+}
 
-  saveOfflineDirectory(initialData.contacts, initialData.shelters);
-  return initialData;
+export async function syncEmergencyDirectoryFromDatabase(): Promise<{
+  contacts: EmergencyContact[];
+  shelters: EmergencyShelter[];
+  metadata: OfflineDirectoryMetadata;
+}> {
+  const res = await fetch('/api/emergency-directory');
+  if (!res.ok) {
+    throw new Error('Unable to fetch emergency directory from PostgreSQL');
+  }
+
+  const payload = (await res.json()) as {
+    contacts: EmergencyContact[];
+    shelters: EmergencyShelter[];
+  };
+  const metadata = saveOfflineDirectory(payload.contacts || [], payload.shelters || []);
+
+  return {
+    contacts: payload.contacts || [],
+    shelters: payload.shelters || [],
+    metadata,
+  };
 }
 
 /**
@@ -76,7 +93,7 @@ export function saveOfflineDirectory(
     lastSyncedAt: new Date().toISOString(),
     contactsCount: contacts.length,
     sheltersCount: shelters.length,
-    version: '1.0',
+    version: 'postgres',
   };
 
   try {

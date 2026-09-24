@@ -13,8 +13,12 @@ CREATE TABLE events (
                         title TEXT,
                         description TEXT,
 
-                        latitude DOUBLE PRECISION,
-                        longitude DOUBLE PRECISION,
+                        latitude DOUBLE PRECISION NOT NULL
+                            CHECK (latitude BETWEEN 6.0 AND 37.6),
+                        longitude DOUBLE PRECISION NOT NULL
+                            CHECK (longitude BETWEEN 68.0 AND 97.5),
+                        event_point POINT
+                            GENERATED ALWAYS AS (point(longitude, latitude)) STORED,
 
                         location_name TEXT,
 
@@ -42,7 +46,11 @@ CREATE TABLE events (
                         admin_notes TEXT,
 
                         verified_by UUID,
+                        verified_by_name TEXT,
                         verified_at TIMESTAMPTZ,
+
+                        frontend_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        mobile_alert_dispatched BOOLEAN NOT NULL DEFAULT FALSE,
 
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -184,6 +192,49 @@ ON CONFLICT (username) DO NOTHING;
 
 
 -- =========================================================
+-- EMERGENCY DIRECTORY
+-- =========================================================
+
+CREATE TABLE emergency_contacts (
+                                    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+                                    name TEXT NOT NULL,
+                                    phone TEXT NOT NULL,
+                                    role TEXT NOT NULL,
+                                    hours TEXT NOT NULL DEFAULT '24/7',
+                                    category VARCHAR(30) NOT NULL,
+
+                                    state TEXT,
+                                    district TEXT,
+                                    city TEXT,
+
+                                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE emergency_shelters (
+                                    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+                                    name TEXT NOT NULL,
+                                    location TEXT NOT NULL,
+                                    state TEXT NOT NULL,
+                                    district TEXT NOT NULL,
+
+                                    capacity TEXT NOT NULL DEFAULT 'Not specified',
+                                    occupied TEXT NOT NULL DEFAULT 'Not specified',
+                                    supplies TEXT NOT NULL DEFAULT 'Not specified',
+                                    contact TEXT NOT NULL,
+
+                                    latitude DOUBLE PRECISION,
+                                    longitude DOUBLE PRECISION,
+                                    status TEXT NOT NULL DEFAULT 'Standby',
+
+                                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+
+-- =========================================================
 -- INDEXES
 -- =========================================================
 
@@ -199,6 +250,9 @@ CREATE INDEX idx_events_event_time
 CREATE INDEX idx_events_location
     ON events(latitude, longitude);
 
+CREATE INDEX idx_events_event_point
+    ON events USING gist(event_point);
+
 CREATE INDEX idx_events_detected_at
     ON events(detected_at);
 
@@ -213,3 +267,9 @@ CREATE INDEX idx_source_posts_event_id
 
 CREATE INDEX idx_event_matches_event_id
     ON event_matches(event_id);
+
+CREATE INDEX idx_emergency_contacts_region
+    ON emergency_contacts(state, district, city);
+
+CREATE INDEX idx_emergency_shelters_region
+    ON emergency_shelters(state, district);

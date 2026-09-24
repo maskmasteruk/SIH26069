@@ -5,8 +5,9 @@ import {
   AlertFilterOptions,
   CitizenReportSubmission,
   DataSourceType,
+  EmergencyContact,
+  EmergencyShelter,
 } from '../types';
-import { INITIAL_EVENTS, INITIAL_RAW_FEED, CHENNAI_FLOOD_IMAGE } from '../data/mockData';
 
 interface AdminSessionUser {
   id: string;
@@ -29,11 +30,13 @@ interface EventContextType {
     decision: 'original' | 'fake' | 'misleading',
     notes: string,
     officerName?: string
-  ) => void;
-  modifyEventDetails: (id: string, updates: Partial<DisasterEvent>) => void;
-  submitCitizenReport: (submission: CitizenReportSubmission) => void;
-  simulateKafkaIngest: (sourceType: DataSourceType, keyword?: string) => void;
-  dispatchMobileAlert: (id: string) => void;
+  ) => Promise<boolean>;
+  modifyEventDetails: (id: string, updates: Partial<DisasterEvent>) => Promise<boolean>;
+  submitCitizenReport: (submission: CitizenReportSubmission) => Promise<boolean>;
+  createEmergencyContact: (contact: Omit<EmergencyContact, 'id'>) => Promise<EmergencyContact | null>;
+  createEmergencyShelter: (shelter: Omit<EmergencyShelter, 'id'>) => Promise<EmergencyShelter | null>;
+  simulateKafkaIngest: (sourceType: DataSourceType, keyword?: string) => Promise<void>;
+  dispatchMobileAlert: (id: string) => Promise<boolean>;
   userLocation: { name: string; lat: number; lng: number };
   setUserLocation: (loc: { name: string; lat: number; lng: number }) => void;
   isLocating: boolean;
@@ -52,8 +55,8 @@ const EventContext = createContext<EventContextType | undefined>(undefined);
 const ADMIN_TOKEN_STORAGE_KEY = 'wave_admin_auth_token';
 
 export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [events, setEvents] = useState<DisasterEvent[]>(INITIAL_EVENTS);
-  const [rawFeed, setRawFeed] = useState<RawFeedItem[]>(INITIAL_RAW_FEED);
+  const [events, setEvents] = useState<DisasterEvent[]>([]);
+  const [rawFeed, setRawFeed] = useState<RawFeedItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<DisasterEvent | null>(null);
   const [currentPath, setCurrentPath] = useState<string>(() => {
     return window.location.pathname || '/';
@@ -268,256 +271,244 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const clearNotificationToast = () => setNotificationToast(null);
 
-  // Admin Verification Action (Original / Fake / Misleading / Modify)
-  const verifyEvent = (
+  const getAdminAuthHeaders = (): Record<string, string> => {
+    try {
+      const token = sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const applyDisasterPayload = (payload: { events?: DisasterEvent[]; rawFeed?: RawFeedItem[] }) => {
+    if (Array.isArray(payload.events)) {
+      setEvents(payload.events);
+      setSelectedEvent((current) =>
+        current ? payload.events?.find((event) => event.id === current.id) || null : current
+      );
+    }
+    if (Array.isArray(payload.rawFeed)) {
+      setRawFeed(payload.rawFeed);
+    }
+  };
+
+  const loadDisasterData = async (silent = false) => {
+    try {
+      const [eventsRes, rawFeedRes] = await Promise.all([
+        fetch('/api/events'),
+        fetch('/api/raw-feed'),
+      ]);
+
+      if (!eventsRes.ok || !rawFeedRes.ok) {
+        throw new Error('PostgreSQL data API returned an error');
+      }
+
+      const [eventsPayload, rawFeedPayload] = await Promise.all([
+        eventsRes.json() as Promise<{ events: DisasterEvent[] }>,
+        rawFeedRes.json() as Promise<{ rawFeed: RawFeedItem[] }>,
+      ]);
+
+      applyDisasterPayload({
+        events: eventsPayload.events,
+        rawFeed: rawFeedPayload.rawFeed,
+      });
+    } catch {
+      if (!silent) {
+        showToast('Unable to load live PostgreSQL disaster data.', 'alert');
+      }
+    }
+  };
+
+  useEffect(() => {
+    loadDisasterData(true);
+  }, []);
+
+  const verifyEvent = async (
     id: string,
     decision: 'original' | 'fake' | 'misleading',
     notes: string,
-    officerName = 'Duty Verification Officer (NDMA-Ops)'
+    officerName = 'Duty Verification Officer'
   ) => {
-    setEvents((prev) =>
-      prev.map((evt) => {
-        if (evt.id !== id) return evt;
-        const statusMap = {
-          original: 'verified_original' as const,
-          fake: 'marked_fake' as const,
-          misleading: 'marked_misleading' as const,
-        };
-        const updatedStatus = statusMap[decision];
-        return {
-          ...evt,
-          status: updatedStatus,
-          adminNotes: notes || evt.adminNotes,
-          verifiedBy: officerName,
-          verifiedAt: 'Just now',
-          lastUpdatedAt: 'Just now',
-          mobileAlertDispatched: decision === 'original' ? evt.mobileAlertDispatched : false,
-        };
-      })
-    );
-
-    const labels = {
-      original: 'Verified as Authentic Incident',
-      fake: 'Flagged as Fake / Rumor',
-      misleading: 'Flagged as Misleading Footage',
-    };
-    showToast(`Event ${id} successfully marked as: ${labels[decision]}`, 'success');
-  };
-
-  const modifyEventDetails = (id: string, updates: Partial<DisasterEvent>) => {
-    setEvents((prev) =>
-      prev.map((evt) => {
-        if (evt.id !== id) return evt;
-        return {
-          ...evt,
-          ...updates,
-          lastUpdatedAt: 'Just now',
-        };
-      })
-    );
-    showToast(`Incident parameters for ${id} updated`, 'info');
-  };
-
-  const dispatchMobileAlert = (id: string) => {
-    setEvents((prev) =>
-      prev.map((evt) => (evt.id === id ? { ...evt, mobileAlertDispatched: true } : evt))
-    );
-    const targetEvt = events.find((e) => e.id === id);
-    showToast(
-      `Mobile Emergency Broadcast dispatched for: ${targetEvt?.title || id} to registered subscribers within ${targetEvt?.affectedRadiusKm || 10}km`,
-      'alert'
-    );
-  };
-
-  // Submit Citizen Report (Runs directly through the architecture)
-  const submitCitizenReport = (submission: CitizenReportSubmission) => {
-    const newRawItem: RawFeedItem = {
-      id: `cit-${Date.now()}`,
-      source: 'citizen_report',
-      sourceHandle: `${submission.reporterName} (Citizen)`,
-      content: submission.description,
-      hashtags: ['#CitizenReport', `#${submission.category}`, '#IndiaWeather'],
-      timestamp: 'Just now',
-      locationRaw: `${submission.locationName}, ${submission.district}, ${submission.state}`,
-      isNationalMedia: false,
-      kafkaTopic: 'citizen-reports',
-      kafkaPartition: 3,
-      kafkaOffset: Math.floor(5200 + Math.random() * 500),
-      mediaUrl: submission.imageFile,
-      sentimentUrgency: submission.immediateRescueNeeded ? 95 : 72,
-      credibilityScore: 88,
-    };
-
-    setRawFeed((prev) => [newRawItem, ...prev]);
-
-    // Check if matches existing event by location / category
-    const matched = events.find(
-      (e) =>
-        e.location.state.toLowerCase() === submission.state.toLowerCase() &&
-        (e.category === submission.category ||
-          e.location.district.toLowerCase() === submission.district.toLowerCase())
-    );
-
-    if (matched) {
-      // Flowchart: Existing Event -> RELATED POST (Link with existing event) -> THRESHOLD CHECK
-      setEvents((prev) =>
-        prev.map((evt) => {
-          if (evt.id !== matched.id) return evt;
-          const newCount = evt.relatedPostsCount + 1;
-          const meetsThreshold = newCount >= 5;
-          let newStatus = evt.status;
-          // If was in unverified pool and now reaches 5, promote to assumed_event!
-          if (evt.status === 'unverified_pool' && meetsThreshold) {
-            newStatus = 'assumed_event';
-          }
-          return {
-            ...evt,
-            relatedPostsCount: newCount,
-            thresholdMet: meetsThreshold,
-            status: newStatus,
-            lastUpdatedAt: 'Just now',
-            rawPosts: [newRawItem, ...evt.rawPosts],
-          };
-        })
-      );
-      showToast(
-        `Citizen report linked to active cluster "${matched.title}". Additional field report recorded.`,
-        'success'
-      );
-    } else {
-      // Flowchart: NO -> UNVERIFIED POOL -> THRESHOLD / TIME CHECK
-      const newDisasterEvent: DisasterEvent = {
-        id: `EVT-2026-${Date.now().toString().slice(-4)}`,
-        title: submission.title,
-        summary: submission.description,
-        category: submission.category,
-        severity: submission.severity,
-        location: {
-          name: submission.locationName,
-          district: submission.district,
-          state: submission.state,
-          lat: 13.0827 + (Math.random() - 0.5) * 0.4,
-          lng: 80.2707 + (Math.random() - 0.5) * 0.4,
-          confidence: 84,
+    try {
+      const res = await fetch(`/api/events/${id}/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAdminAuthHeaders(),
         },
-        affectedRadiusKm: 5.0,
-        firstReportedAt: 'Just now',
-        lastUpdatedAt: 'Just now',
-        relatedPostsCount: 1,
-        thresholdMet: false,
-        status: 'unverified_pool',
-        mlScores: {
-          credibilityScore: 84,
-          urgencySentiment: submission.immediateRescueNeeded ? 92 : 68,
-          locationConfidence: 84,
-          duplicateClusterMatch: 30,
-          accountAuthenticity: 'High-Trust',
-          mediaIntegrity: submission.imageFile ? 'Original EXIF' : 'No Media',
-        },
-        adminNotes: 'Citizen report ingested into Unverified Pool. Monitoring for matching social posts.',
-        mobileAlertDispatched: false,
-        mediaUrls: submission.imageFile ? [submission.imageFile] : [],
-        keyHighlights: [
-          'Initial on-ground report logged by local resident',
-          'GPS geo-tag extracted and queued for event correlation',
-        ],
-        officialSafetyGuidance: [
-          'Awaiting local revenue inspector verification',
-          'Follow municipal emergency advisory in this sector',
-        ],
-        emergencyContacts: [
-          { name: 'State Emergency Operation Centre', phone: '1070', role: 'General Control' },
-        ],
-        rawPosts: [newRawItem],
-        highTrustSourceBypass: false,
+        body: JSON.stringify({ decision, notes, officerName }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Verification request failed');
+      }
+
+      applyDisasterPayload(await res.json());
+      const labels = {
+        original: 'Verified as Authentic Incident',
+        fake: 'Flagged as Fake / Rumor',
+        misleading: 'Flagged as Misleading Footage',
       };
-
-      setEvents((prev) => [newDisasterEvent, ...prev]);
-      showToast(
-        `Report received: Ingested via Kafka stream into PostgreSQL Unverified Pool.`,
-        'info'
-      );
+      showToast(`Event ${id} successfully marked as: ${labels[decision]}`, 'success');
+      return true;
+    } catch {
+      showToast('Unable to update verification in PostgreSQL.', 'alert');
+      return false;
     }
   };
 
-  // Simulate incoming Kafka post (for demo/eval testing of the pipeline)
-  const simulateKafkaIngest = (sourceType: DataSourceType, keyword = '#Rain') => {
-    const locations = [
-      { name: 'Velachery, Chennai', district: 'Chennai', state: 'Tamil Nadu', lat: 12.9815, lng: 80.218 },
-      { name: 'Majuli Island', district: 'Majuli', state: 'Assam', lat: 26.9602, lng: 94.2155 },
-      { name: 'Puri Coast', district: 'Puri', state: 'Odisha', lat: 19.8135, lng: 85.8312 },
-      { name: 'Meppadi Hills', district: 'Wayanad', state: 'Kerala', lat: 11.5518, lng: 76.1264 },
-    ];
-    const loc = locations[Math.floor(Math.random() * locations.length)];
-    const isNational = sourceType === 'national_media';
+  const modifyEventDetails = async (id: string, updates: Partial<DisasterEvent>) => {
+    try {
+      const res = await fetch(`/api/events/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAdminAuthHeaders(),
+        },
+        body: JSON.stringify({ updates }),
+      });
 
-    const newRawItem: RawFeedItem = {
-      id: `stream-${Date.now()}`,
-      source: sourceType,
-      sourceHandle:
-        sourceType === 'national_media'
-          ? 'DD News National Bureau'
-          : sourceType === 'x'
-          ? `@citizen_watcher_${Math.floor(Math.random() * 900 + 100)}`
-          : sourceType === 'weather_api'
-          ? 'IMD AWS Radar Telemetry'
-          : `@local_reporter_${Math.floor(Math.random() * 900 + 100)}`,
-      content: `Live telemetry update for ${loc.name}: continuous precipitation and water logging reported. ${keyword} #IMD #IndiaWeather`,
-      hashtags: [keyword, '#IMD', '#IndiaWeather'],
-      timestamp: 'Just now',
-      locationRaw: `${loc.name}, ${loc.state}`,
-      isNationalMedia: isNational,
-      kafkaTopic: isNational
-        ? 'national-wire'
-        : sourceType === 'weather_api'
-        ? 'weather-telemetry'
-        : 'raw-social-stream',
-      kafkaPartition: Math.floor(Math.random() * 4),
-      kafkaOffset: Math.floor(89400 + Math.random() * 500),
-      mediaUrl: isNational ? undefined : CHENNAI_FLOOD_IMAGE,
-      sentimentUrgency: Math.floor(65 + Math.random() * 30),
-      credibilityScore: isNational ? 99 : Math.floor(60 + Math.random() * 35),
-    };
+      if (!res.ok) {
+        throw new Error('Event update failed');
+      }
 
-    setRawFeed((prev) => [newRawItem, ...prev]);
-
-    // Check architecture branch: If National Media -> directly verified!
-    if (isNational) {
-      showToast(
-        `High-Trust Source Ingested: National Media broadcast verified and routed directly to Verified Events Database`,
-        'success'
-      );
-      return;
+      applyDisasterPayload(await res.json());
+      showToast(`Incident parameters for ${id} updated in PostgreSQL`, 'info');
+      return true;
+    } catch {
+      showToast('Unable to update incident parameters in PostgreSQL.', 'alert');
+      return false;
     }
+  };
 
-    // Match with existing event
-    const matched = events.find(
-      (e) => e.location.state === loc.state || e.location.district === loc.district
-    );
-    if (matched) {
-      setEvents((prev) =>
-        prev.map((evt) => {
-          if (evt.id !== matched.id) return evt;
-          const updatedCount = evt.relatedPostsCount + 1;
-          const meetsThreshold = updatedCount >= 5;
-          let newStatus = evt.status;
-          if (evt.status === 'unverified_pool' && meetsThreshold) {
-            newStatus = 'assumed_event';
-          }
-          return {
-            ...evt,
-            relatedPostsCount: updatedCount,
-            thresholdMet: meetsThreshold,
-            status: newStatus,
-            lastUpdatedAt: 'Just now',
-            rawPosts: [newRawItem, ...evt.rawPosts],
-          };
-        })
-      );
+  const dispatchMobileAlert = async (id: string) => {
+    try {
+      const res = await fetch(`/api/events/${id}/mobile-alert`, {
+        method: 'POST',
+        headers: getAdminAuthHeaders(),
+      });
+
+      if (!res.ok) {
+        throw new Error('Mobile alert update failed');
+      }
+
+      applyDisasterPayload(await res.json());
+      const targetEvt = events.find((e) => e.id === id);
       showToast(
-        `Kafka event matched to cluster "${matched.title}". Additional field report recorded.`,
-        'info'
+        `Mobile Emergency Broadcast dispatched for: ${targetEvt?.title || id}`,
+        'alert'
       );
+      return true;
+    } catch {
+      showToast('Unable to persist mobile alert dispatch in PostgreSQL.', 'alert');
+      return false;
+    }
+  };
+
+  const submitCitizenReport = async (submission: CitizenReportSubmission) => {
+    try {
+      const res = await fetch('/api/citizen-reports', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          submission: {
+            ...submission,
+            latitude: userLocation.lat,
+            longitude: userLocation.lng,
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Citizen report insert failed');
+      }
+
+      const payload = await res.json();
+      applyDisasterPayload(payload);
+      if (payload.reportRouting?.mode === 'kafka_listener') {
+        showToast('Report sent to Kafka listener for classification and admin verification.', 'info');
+      } else {
+        showToast('Report received and sent to admin verification queue.', 'info');
+      }
+      return true;
+    } catch {
+      showToast('Unable to store citizen report in PostgreSQL.', 'alert');
+      return false;
+    }
+  };
+
+  const createEmergencyContact = async (
+    contact: Omit<EmergencyContact, 'id'>
+  ): Promise<EmergencyContact | null> => {
+    try {
+      const res = await fetch('/api/admin/emergency-contacts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAdminAuthHeaders(),
+        },
+        body: JSON.stringify(contact),
+      });
+
+      if (!res.ok) {
+        throw new Error('Emergency contact creation failed');
+      }
+
+      const payload = (await res.json()) as { contact: EmergencyContact };
+      showToast('Emergency helpline added to the public offline directory.', 'success');
+      return payload.contact;
+    } catch {
+      showToast('Unable to create emergency helpline in PostgreSQL.', 'alert');
+      return null;
+    }
+  };
+
+  const createEmergencyShelter = async (
+    shelter: Omit<EmergencyShelter, 'id'>
+  ): Promise<EmergencyShelter | null> => {
+    try {
+      const res = await fetch('/api/admin/emergency-shelters', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAdminAuthHeaders(),
+        },
+        body: JSON.stringify(shelter),
+      });
+
+      if (!res.ok) {
+        throw new Error('Emergency shelter creation failed');
+      }
+
+      const payload = (await res.json()) as { shelter: EmergencyShelter };
+      showToast('Relief shelter added with GIS coordinates.', 'success');
+      return payload.shelter;
+    } catch {
+      showToast('Unable to create relief shelter in PostgreSQL.', 'alert');
+      return null;
+    }
+  };
+
+  const simulateKafkaIngest = async (sourceType: DataSourceType, keyword = '#Rain') => {
+    try {
+      const res = await fetch('/api/source-posts/simulate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ sourceType, keyword }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Source post simulation failed');
+      }
+
+      applyDisasterPayload(await res.json());
+      showToast('Database-backed stream event recorded in PostgreSQL.', 'info');
+    } catch {
+      showToast('Unable to record simulated stream event in PostgreSQL.', 'alert');
     }
   };
 
@@ -535,6 +526,8 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         verifyEvent,
         modifyEventDetails,
         submitCitizenReport,
+        createEmergencyContact,
+        createEmergencyShelter,
         simulateKafkaIngest,
         dispatchMobileAlert,
         userLocation,

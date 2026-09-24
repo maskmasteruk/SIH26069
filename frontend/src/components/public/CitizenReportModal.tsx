@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useEvents } from '../../context/EventContext';
 import { IncidentCategory, IncidentSeverity } from '../../types';
 import { AlertCircle, Camera, CheckCircle2, MapPin, Send, X, LifeBuoy } from 'lucide-react';
-import { CHENNAI_FLOOD_IMAGE } from '../../data/mockData';
 
 interface Props {
   isOpen: boolean;
@@ -21,17 +20,17 @@ export const CitizenReportModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const [state, setState] = useState('Tamil Nadu');
   const [reporterName, setReporterName] = useState('');
   const [contactNumber, setContactNumber] = useState('');
-  const [imageAttached, setImageAttached] = useState<string | null>(null);
+  const [mediaUrl, setMediaUrl] = useState('');
   const [immediateRescueNeeded, setImmediateRescueNeeded] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || !description || !locationName) return;
 
-    submitCitizenReport({
+    const saved = await submitCitizenReport({
       title,
       description,
       category,
@@ -41,9 +40,11 @@ export const CitizenReportModal: React.FC<Props> = ({ isOpen, onClose }) => {
       state,
       reporterName: reporterName || 'Anonymous Resident',
       contactNumber: contactNumber || 'Not provided',
-      imageFile: imageAttached || undefined,
+      imageFile: mediaUrl.trim() || undefined,
       immediateRescueNeeded,
     });
+
+    if (!saved) return;
 
     setSubmitted(true);
     setTimeout(() => {
@@ -55,7 +56,7 @@ export const CitizenReportModal: React.FC<Props> = ({ isOpen, onClose }) => {
       setLocationName('');
       setReporterName('');
       setContactNumber('');
-      setImageAttached(null);
+      setMediaUrl('');
       setImmediateRescueNeeded(false);
     }, 2200);
   };
@@ -248,7 +249,7 @@ export const CitizenReportModal: React.FC<Props> = ({ isOpen, onClose }) => {
                 />
               </div>
 
-              {/* Media attachment simulation */}
+              {/* Media URL */}
               <div className="flex items-center justify-between p-3 rounded-lg border border-dashed border-slate-300 bg-slate-50">
                 <div className="flex items-center gap-3">
                   <div className="h-9 w-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600">
@@ -256,20 +257,20 @@ export const CitizenReportModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   </div>
                   <div className="text-xs">
                     <div className="font-semibold text-slate-800">
-                      Attach Photo / Geotagged Media
+                      Optional Media URL
                     </div>
                     <div className="text-slate-500">
-                      {imageAttached ? 'Incident photo attached' : 'Used for ML reverse-image integrity check'}
+                      Stored with the report in PostgreSQL when provided
                     </div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setImageAttached(imageAttached ? null : CHENNAI_FLOOD_IMAGE)}
-                  className="px-3 py-1.5 text-xs font-medium bg-white border border-slate-300 hover:bg-slate-100 rounded-md text-slate-700 transition-colors"
-                >
-                  {imageAttached ? 'Remove Photo' : 'Attach Sample Photo'}
-                </button>
+                <input
+                  type="url"
+                  placeholder="https://..."
+                  value={mediaUrl}
+                  onChange={(e) => setMediaUrl(e.target.value)}
+                  className="w-52 max-w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs focus:border-slate-900 focus:outline-hidden"
+                />
               </div>
 
               {/* Reporter details */}

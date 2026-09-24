@@ -3,13 +3,12 @@ import { useEvents } from '../../context/EventContext';
 import {
   EmergencyContact,
   EmergencyShelter,
-} from '../../data/emergencyDirectory';
+} from '../../types';
 import {
   getOfflineDirectory,
-  saveOfflineDirectory,
+  syncEmergencyDirectoryFromDatabase,
   useOnlineStatus,
   downloadOfflineEmergencySheet,
-  OfflineDirectoryMetadata,
 } from '../../utils/offlineDirectoryStorage';
 import {
   Phone,
@@ -35,18 +34,22 @@ export const EmergencyDirectorySection: React.FC<{ compact?: boolean }> = () => 
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
   // Sync / refresh offline cache
-  const handleSyncCache = () => {
-    const refreshed = getOfflineDirectory();
-    // Update timestamp
-    const meta = saveOfflineDirectory(refreshed.contacts, refreshed.shelters);
-    setCachedData({
-      contacts: refreshed.contacts,
-      shelters: refreshed.shelters,
-      metadata: meta,
-    });
-    setSyncNotice('Emergency directory cache refreshed and saved locally.');
+  const handleSyncCache = async () => {
+    try {
+      const refreshed = await syncEmergencyDirectoryFromDatabase();
+      setCachedData(refreshed);
+      setSyncNotice('Emergency directory cache refreshed from PostgreSQL.');
+    } catch {
+      setSyncNotice('Unable to refresh directory from PostgreSQL. Showing cached data.');
+    }
     setTimeout(() => setSyncNotice(null), 3000);
   };
+
+  useEffect(() => {
+    if (isOnline) {
+      handleSyncCache();
+    }
+  }, [isOnline]);
 
   const locLower = userLocation.name.toLowerCase();
 
@@ -122,14 +125,13 @@ export const EmergencyDirectorySection: React.FC<{ compact?: boolean }> = () => 
     return true;
   });
 
-  const presetLocations = [
-    { name: 'Velachery, Chennai (TN)', lat: 12.9815, lng: 80.218 },
-    { name: 'Puri Coastal Sector (OD)', lat: 19.8135, lng: 85.8312 },
-    { name: 'Majuli Island (AS)', lat: 26.9602, lng: 94.2155 },
-    { name: 'Wayanad Ghats (KL)', lat: 11.5518, lng: 76.1264 },
-    { name: 'Mumbai Coast (MH)', lat: 19.0178, lng: 72.8478 },
-    { name: 'National Network View', lat: 23.5, lng: 80.0 },
-  ];
+  const presetLocations = cachedData.shelters
+    .reduce<Array<{ name: string; lat: number; lng: number }>>((locations, shelter) => {
+      const name = [shelter.district, shelter.state].filter(Boolean).join(', ');
+      if (!name || locations.some((loc) => loc.name === name)) return locations;
+      return [...locations, { name, lat: shelter.lat, lng: shelter.lng }];
+    }, [])
+    .slice(0, 6);
 
   return (
     <section id="emergency-directory" className="space-y-6 font-sans">

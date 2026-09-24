@@ -100,6 +100,33 @@ export interface CitizenReportSubmission {
   immediateRescueNeeded: boolean;
 }
 
+export interface EmergencyContact {
+  id: string;
+  name: string;
+  phone: string;
+  role: string;
+  hours: string;
+  category: 'National' | 'State' | 'Municipal' | 'Rescue' | 'Medical' | string;
+  state?: string;
+  district?: string;
+  city?: string;
+}
+
+export interface EmergencyShelter {
+  id: string;
+  name: string;
+  location: string;
+  state: string;
+  district: string;
+  capacity: string;
+  occupied: string;
+  supplies: string;
+  contact: string;
+  lat: number;
+  lng: number;
+  status: string;
+}
+
 export interface AlertFilterOptions {
   status: 'all' | 'verified' | 'assumed' | 'under_review' | 'debunked';
   category: string;
